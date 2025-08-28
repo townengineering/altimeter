@@ -1,11 +1,11 @@
 //% weight=95 color=#2E86C1 icon="\uf135" block="BMP384"
 namespace bmp384 {
     // ========= I2C + Registers =========
-    let ADDR = 0x77 // default; auto-try 0x76 if CHIP_ID mismatch
+    let ADDR = 0x77 // default; will auto-try 0x76 if CHIP_ID mismatch
 
     const REG_CHIP_ID  = 0x00 // expect 0x50
     const REG_STATUS   = 0x03
-    const REG_DATA_0   = 0x04 // press[23:0] 0x04..0x06, temp[23:0] 0x07..0x09
+    const REG_DATA_0   = 0x04 // P[23:0] 0x04..0x06, T[23:0] 0x07..0x09 (20-bit MSB-aligned)
     const REG_PWR_CTRL = 0x1B
     const REG_OSR      = 0x1C
     const REG_ODR      = 0x1D
@@ -16,16 +16,16 @@ namespace bmp384 {
     const CALIB_START = 0x31
     const CALIB_LEN   = 0x45 - 0x31 + 1
 
-    // ========= calibration (converted “par_*”) and state =========
+    // ========= calibration and state =========
     let par_t1=0, par_t2=0, par_t3=0
     let par_p1=0, par_p2=0, par_p3=0, par_p4=0, par_p5=0, par_p6=0, par_p7=0, par_p8=0, par_p9=0, par_p10=0, par_p11=0
-    let t_lin = 0 // linearized temperature used in pressure compensation
+    let t_lin = 0
 
-    let seaLevelPa = 101325 // P0 (Pa)
-    let zeroAlt = 0 // absolute altitude at "zero here"
+    let seaLevelPa = 101325
+    let zeroAlt = 0
     let initialized = false
 
-    // ========= low-level I2C helpers =========
+    // ========= low-level I2C =========
     function wr8(reg: number, val: number) {
         const b = pins.createBuffer(2)
         b[0] = reg; b[1] = val & 0xFF
@@ -44,17 +44,17 @@ namespace bmp384 {
     }
 
     function setConfig() {
-        // Enable temp+press, NORMAL mode (mode bits are 5:4 = 0b11)
-        // PWR_CTRL: [5:4] mode, [1] temp_en, [0] press_en
+        // PWR_CTRL: [5:4]=mode (11 normal), [1]=temp_en, [0]=press_en
         wr8(REG_PWR_CTRL, (0b11 << 4) | (1 << 1) | (1 << 0))  // 0x33
 
-        // Oversampling: OSR 0x1C: osr_t[5:3], osr_p[2:0]
-        wr8(REG_OSR, (0b100 << 3) | 0b101)  // T x8, P x16
+        // OSR 0x1C: osr_t[5:3], osr_p[2:0]  => T x8, P x16
+        wr8(REG_OSR, (0b100 << 3) | 0b101)
 
-        // IIR filter lighter for responsiveness
+        // IIR filter (CONFIG 0x1F): iir_filter[2:0] — lighter = faster response
         wr8(REG_CONFIG, 0b010)
-}
 
+        // Optional: leave ODR at default
+        // wr8(REG_ODR, 0x00)
     }
 
     // ========= read + convert calibration =========
@@ -86,7 +86,7 @@ namespace bmp384 {
         const NVM_P10 = S8(c[19])
         const NVM_P11 = S8(c[20])
 
-        // Convert to par_* (use powers of two; avoid 32-bit shifts)
+        // par_* scaling (use powers of two; avoid 32-bit shifts)
         par_t1  = NVM_T1  / p2(8)
         par_t2  = NVM_T2  / p2(30)
         par_t3  = NVM_T3  / p2(48)
@@ -106,17 +106,15 @@ namespace bmp384 {
         t_lin = 0
     }
 
-    // ========= raw burst read =========
+    // ========= raw burst read (20-bit values) =========
     function readUncomp(): { up: number, ut: number } {
         const b = rdFrom(REG_DATA_0, 6)
-        const up = ((b[0] << 16) | (b[1] << 8) | b[2]) >> 4  // 20-bit
-        const ut = ((b[3] << 16) | (b[4] << 8) | b[5]) >> 4  // 20-bit
+        const up = ((b[0] << 16) | (b[1] << 8) | b[2]) >> 4
+        const ut = ((b[3] << 16) | (b[4] << 8) | b[5]) >> 4
         return { up: up, ut: ut }
-}
-
     }
 
-    // ========= compensation (floating point) =========
+    // ========= compensation =========
     function compensateTemperature(uncomp_temp: number): number {
         const pd1 = (uncomp_temp - par_t1)
         const pd2 = pd1 * par_t2
@@ -125,7 +123,6 @@ namespace bmp384 {
     }
 
     function compensatePressure(uncomp_press: number): number {
-        // Uses t_lin computed above.
         const pd1 = par_p6 * t_lin
         const pd2 = par_p7 * t_lin * t_lin
         const pd3 = par_p8 * t_lin * t_lin * t_lin
@@ -151,16 +148,15 @@ namespace bmp384 {
 
         // Try default address, then alternate (expect CHIP_ID 0x50)
         let id = readChipId()
+        if (id != 0x50) { ADDR = 0x76; id = readChipId() }
         if (id != 0x50) {
             serial.writeLine("BMP384: unexpected CHIP_ID=" + id + " (addr=0x" + ADDR.toString(16) + ")")
-            // continue anyway; reads will show if it's working
-}
+        }
 
-        
         setConfig()
         readCalib()
 
-        // Prime t_lin
+        // prime t_lin
         const u = readUncomp()
         compensateTemperature(u.ut)
         compensatePressure(u.up)
@@ -222,7 +218,6 @@ namespace bmp384 {
     //% block="relative altitude (m)"
     //% weight=70
     export function relativeAltitudeM(): number {
-        // identical to altitudeM() but named for students; handy in Blocks
         return altitudeM()
     }
 }
