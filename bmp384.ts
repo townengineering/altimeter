@@ -1,7 +1,7 @@
 //% weight=95 color=#2E86C1 icon="\uf135" block="BMP384"
 namespace bmp384 {
     // ==== I2C + Registers ====
-    const ADDR = 0x77
+    let ADDR = 0x77 // default
     const REG_CHIP_ID  = 0x00 // expect 0x50
     const REG_DATA_0   = 0x04 // press[23:0] @ 0x04..0x06, temp[23:0] @ 0x07..0x09
     const REG_STATUS   = 0x03
@@ -155,16 +155,19 @@ namespace bmp384 {
     function ensureInit() {
         if (initialized) return
         softReset()
-        const id = readChipId()
-        // optional sanity check
-        if (id != 0x50) serial.writeLine(`BMP384: unexpected CHIP_ID=${id}`)
+        let id = readChipId()
+        if (id != 0x50) {
+            // try alternate address
+            ADDR = 0x76
+            id = readChipId()
+        }
+        if (id != 0x50) {
+            serial.writeLine(`BMP384: unexpected CHIP_ID=${id} (addr=${ADDR})`)
+        }
         setConfig()
         readCalib()
-        // Prime the t_lin value
-        const u = readUncomp()
-        compensateTemperature(u.ut)
-        compensatePressure(u.up)
         initialized = true
+}
     }
 
     // ===== Blocks =====
