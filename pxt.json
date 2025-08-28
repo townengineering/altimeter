@@ -1,7 +1,7 @@
 {
-  "name": "bmp384",
+  "name": "pxt-bmp384",
   "version": "0.0.1",
-  "description": "Test MakeCode blocks for BMP384 sensor",
+  "description": "MakeCode blocks for BMP384 sensor (SparkFun Qwiic)",
   "license": "MIT",
   "dependencies": {
     "core": "*"
@@ -9,4 +9,7 @@
   "files": [
     "bmp384.ts"
   ],
-  "testFil
+  "testFiles": [],
+  "supportedTargets": [ "microbit" ],
+  "preferredEditor": "tsprj"
+}
