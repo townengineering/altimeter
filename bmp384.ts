@@ -109,9 +109,11 @@ namespace bmp384 {
     // ========= raw burst read =========
     function readUncomp(): { up: number, ut: number } {
         const b = rdFrom(REG_DATA_0, 6)
-        const up = (b[0] << 16) | (b[1] << 8) | b[2]
-        const ut = (b[3] << 16) | (b[4] << 8) | b[5]
+        const up = ((b[0] << 16) | (b[1] << 8) | b[2]) >> 4  // 20-bit
+        const ut = ((b[3] << 16) | (b[4] << 8) | b[5]) >> 4  // 20-bit
         return { up: up, ut: ut }
+}
+
     }
 
     // ========= compensation (floating point) =========
