@@ -1,7 +1,7 @@
 {
   "name": "bmp384",
   "version": "0.0.1",
-  "description": "Test MakeCode blocks for BMP384 sensor",
+  "description": "MakeCode blocks for BMP384 sensor",
   "license": "MIT",
   "dependencies": { "core": "*" },
   "files": [ "bmp384.ts" ],
