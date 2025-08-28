@@ -1,12 +1,11 @@
 //% weight=95 color=#2E86C1 icon="\uf135" block="BMP384"
 namespace bmp384 {
     // ========= I2C + Registers =========
-    let ADDR = 0x77 // default; we'll auto-try 0x76 if CHIP_ID mismatch
+    let ADDR = 0x77 // default; auto-try 0x76 if CHIP_ID mismatch
 
     const REG_CHIP_ID  = 0x00 // expect 0x50
-    const REG_ERR      = 0x02
     const REG_STATUS   = 0x03
-    const REG_DATA_0   = 0x04 // press[23:0] @ 0x04..0x06, temp[23:0] @ 0x07..0x09
+    const REG_DATA_0   = 0x04 // press[23:0] 0x04..0x06, temp[23:0] 0x07..0x09
     const REG_PWR_CTRL = 0x1B
     const REG_OSR      = 0x1C
     const REG_ODR      = 0x1D
@@ -23,7 +22,7 @@ namespace bmp384 {
     let t_lin = 0 // linearized temperature used in pressure compensation
 
     let seaLevelPa = 101325 // P0 (Pa)
-    let zeroAlt = 0 // tare altitude (m)
+    let zeroAlt = 0 // absolute altitude at "zero here"
     let initialized = false
 
     // ========= low-level I2C helpers =========
@@ -45,27 +44,22 @@ namespace bmp384 {
     }
 
     function setConfig() {
-        // Enable temp+press, NORMAL mode (continuous)
+        // Enable temp+press, NORMAL mode
         // PWR_CTRL: [4:3] mode (11b normal), [1] temp_en, [0] press_en
         wr8(REG_PWR_CTRL, (0b11 << 3) | (1 << 1) | (1 << 0))
 
         // Oversampling: OSR 0x1C: osr_t[5:3], osr_p[2:0]
-        // High-res: temp x8 (100b), press x16 (101b)
+        // High-res but still snappy: temp x8 (100b), press x16 (101b)
         wr8(REG_OSR, (0b100 << 3) | 0b101)
 
-        // Output Data Rate (optional) — leave default
-        // wr8(REG_ODR, 0x00)
-
-        // IIR filter (CONFIG 0x1F): iir_filter[2:0]
-        // Use a lighter filter for faster response (coef ~4)
-        wr8(REG_CONFIG, 0b010)
+        // IIR filter (CONFIG 0x1F): iir_filter[2:0]; lighter = faster response
+        wr8(REG_CONFIG, 0b010) // ~coef 4
+        // Optional ODR (leave default): wr8(REG_ODR, 0x00)
     }
 
     // ========= read + convert calibration =========
     function readCalib() {
         const c = rdFrom(CALIB_START, CALIB_LEN)
-
-        // helpers
         function U16(lo: number, hi: number) { return (lo | (hi << 8)) & 0xFFFF }
         function S16(lo: number, hi: number) {
             let u = U16(lo, hi); if (u & 0x8000) u = -((~u + 1) & 0xFFFF); return u
@@ -73,30 +67,26 @@ namespace bmp384 {
         function S8(x: number) { return (x & 0x80) ? x - 256 : x }
         function p2(n: number) { return Math.pow(2, n) }
 
-        // NVM map (BMP384/BMP388):
-        // T1: 0x31,0x32 (U16) ; T2: 0x33,0x34 (U16) ; T3: 0x35 (S8)
+        // NVM map (BMP38x)
         const NVM_T1 = U16(c[0], c[1])
         const NVM_T2 = U16(c[2], c[3])
         const NVM_T3 = S8(c[4])
 
-        // P1: 0x36,0x37 (S16); P2: 0x38,0x39 (S16); P3: 0x3A (S8); P4: 0x3B (S8)
         const NVM_P1 = S16(c[5], c[6])
         const NVM_P2 = S16(c[7], c[8])
         const NVM_P3 = S8(c[9])
         const NVM_P4 = S8(c[10])
 
-        // P5: 0x3C,0x3D (U16); P6: 0x3E,0x3F (U16)
         const NVM_P5 = U16(c[11], c[12])
         const NVM_P6 = U16(c[13], c[14])
 
-        // P7: 0x40 (S8); P8: 0x41 (S8); P9: 0x42,0x43 (S16); P10: 0x44 (S8); P11: 0x45 (S8)
         const NVM_P7  = S8(c[15])
         const NVM_P8  = S8(c[16])
         const NVM_P9  = S16(c[17], c[18])
         const NVM_P10 = S8(c[19])
         const NVM_P11 = S8(c[20])
 
-        // Convert to par_* (Bosch scaling; use powers of two, not << which is 32-bit)
+        // Convert to par_* (use powers of two; avoid 32-bit shifts)
         par_t1  = NVM_T1  / p2(8)
         par_t2  = NVM_T2  / p2(30)
         par_t3  = NVM_T3  / p2(48)
@@ -119,18 +109,17 @@ namespace bmp384 {
     // ========= raw burst read =========
     function readUncomp(): { up: number, ut: number } {
         const b = rdFrom(REG_DATA_0, 6)
-        const up = (b[0] << 16) | (b[1] << 8) | b[2] // uncomp. pressure
-        const ut = (b[3] << 16) | (b[4] << 8) | b[5] // uncomp. temperature
+        const up = (b[0] << 16) | (b[1] << 8) | b[2]
+        const ut = (b[3] << 16) | (b[4] << 8) | b[5]
         return { up: up, ut: ut }
     }
 
     // ========= compensation (floating point) =========
-    // Returns t_lin (°C approx), and stores t_lin for pressure
     function compensateTemperature(uncomp_temp: number): number {
         const pd1 = (uncomp_temp - par_t1)
         const pd2 = pd1 * par_t2
         t_lin = pd2 + (pd1 * pd1) * par_t3
-        return t_lin
+        return t_lin // approx °C
     }
 
     function compensatePressure(uncomp_press: number): number {
@@ -151,7 +140,6 @@ namespace bmp384 {
     }
 
     function pressureToAltitude(pa: number): number {
-        // Standard atmosphere barometric formula
         return 44330 * (1 - Math.pow(pa / seaLevelPa, 0.1903))
     }
 
@@ -159,22 +147,15 @@ namespace bmp384 {
         if (initialized) return
         softReset()
 
-        // Try default address, then alternate. Expect CHIP_ID 0x50.
+        // Try default address, then alternate (expect CHIP_ID 0x50)
         let id = readChipId()
-        if (id != 0x50) {
-            ADDR = 0x76
-            id = readChipId()
-        }
-        if (id != 0x50) {
-            serial.writeString("BMP384: unexpected CHIP_ID=" + id + " (addr=0x" + ADDR.toString(16) + ")")
-            serial.writeLine() // newline
-            // continue anyway; reads will show if it's working
-        }
+        if (id != 0x50) { ADDR = 0x76; id = readChipId() }
+        // If still not 0x50, we continue anyway; reads will reveal issues.
 
         setConfig()
         readCalib()
 
-        // Prime the t_lin value
+        // Prime t_lin
         const u = readUncomp()
         compensateTemperature(u.ut)
         compensatePressure(u.up)
@@ -186,20 +167,17 @@ namespace bmp384 {
 
     //% block="BMP384 init (I²C auto-detect)"
     //% weight=100
-    export function init() {
-        ensureInit()
-    }
+    export function init() { ensureInit() }
 
     //% block="set sea-level pressure P₀ to %pa Pa"
     //% pa.defl=101325
-    //% weight=90
+    //% weight=95
     export function setSeaLevelPa(pa: number) {
-        // clamp to a sane range to avoid NaN
         seaLevelPa = Math.max(80000, Math.min(105000, pa | 0))
     }
 
     //% block="zero altitude here"
-    //% weight=85
+    //% weight=90
     export function zeroHere() {
         ensureInit()
         const u = readUncomp()
@@ -209,33 +187,37 @@ namespace bmp384 {
     }
 
     //% block="pressure (Pa)"
-    //% weight=80
+    //% weight=85
     export function pressurePa(): number {
         ensureInit()
         const u = readUncomp()
-        if (u.up === 0 && u.ut === 0) return 0 // likely I2C problem
+        if (u.up === 0 && u.ut === 0) return 0 // likely I2C/wiring issue
         compensateTemperature(u.ut)
         const p = compensatePressure(u.up)
-        // sanity guard
         if (!(p > 0 && p < 200000)) return 0
-        return p // return as floating Pa (no rounding)
+        return p // float Pa
     }
 
     //% block="temperature (°C)"
-    //% weight=75
+    //% weight=80
     export function temperatureC(): number {
         ensureInit()
         const u = readUncomp()
-        const t = compensateTemperature(u.ut)
-        return t // float °C (approx)
+        return compensateTemperature(u.ut) // float °C
     }
 
     //% block="altitude (m)"
-    //% weight=70
+    //% weight=75
     export function altitudeM(): number {
         const p = pressurePa()
         if (!(p > 0)) return 0
-        const absAlt = pressureToAltitude(p)
-        return absAlt - zeroAlt // float meters (no rounding)
+        return pressureToAltitude(p) - zeroAlt // float meters
+    }
+
+    //% block="relative altitude (m)"
+    //% weight=70
+    export function relativeAltitudeM(): number {
+        // identical to altitudeM() but named for students; handy in Blocks
+        return altitudeM()
     }
 }
