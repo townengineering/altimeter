@@ -44,17 +44,17 @@ namespace bmp384 {
     }
 
     function setConfig() {
-        // Enable temp+press, NORMAL mode
-        // PWR_CTRL: [4:3] mode (11b normal), [1] temp_en, [0] press_en
-        wr8(REG_PWR_CTRL, (0b11 << 3) | (1 << 1) | (1 << 0))
+        // Enable temp+press, NORMAL mode (mode bits are 5:4 = 0b11)
+        // PWR_CTRL: [5:4] mode, [1] temp_en, [0] press_en
+        wr8(REG_PWR_CTRL, (0b11 << 4) | (1 << 1) | (1 << 0))  // 0x33
 
         // Oversampling: OSR 0x1C: osr_t[5:3], osr_p[2:0]
-        // High-res but still snappy: temp x8 (100b), press x16 (101b)
-        wr8(REG_OSR, (0b100 << 3) | 0b101)
+        wr8(REG_OSR, (0b100 << 3) | 0b101)  // T x8, P x16
 
-        // IIR filter (CONFIG 0x1F): iir_filter[2:0]; lighter = faster response
-        wr8(REG_CONFIG, 0b010) // ~coef 4
-        // Optional ODR (leave default): wr8(REG_ODR, 0x00)
+        // IIR filter lighter for responsiveness
+        wr8(REG_CONFIG, 0b010)
+}
+
     }
 
     // ========= read + convert calibration =========
