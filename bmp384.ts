@@ -151,9 +151,12 @@ namespace bmp384 {
 
         // Try default address, then alternate (expect CHIP_ID 0x50)
         let id = readChipId()
-        if (id != 0x50) { ADDR = 0x76; id = readChipId() }
-        // If still not 0x50, we continue anyway; reads will reveal issues.
+        if (id != 0x50) {
+            serial.writeLine("BMP384: unexpected CHIP_ID=" + id + " (addr=0x" + ADDR.toString(16) + ")")
+            // continue anyway; reads will show if it's working
+}
 
+        
         setConfig()
         readCalib()
 
