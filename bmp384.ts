@@ -216,6 +216,6 @@ namespace bmp384 {
     export function altitudeM(): number {
         const p = pressurePa()
         const a = pressureToAltitude(p) - zeroAlt
-        return Math.round(a)
+        return Math.round(a * 10) / 10
     }
 }
