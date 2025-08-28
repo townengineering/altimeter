@@ -166,7 +166,8 @@ namespace bmp384 {
             id = readChipId()
         }
         if (id != 0x50) {
-            serial.writeLine(`BMP384: unexpected CHIP_ID=${id} (addr=0x${ADDR.toString(16)})`)
+            serial.writeString("BMP384: unexpected CHIP_ID=" + id + " (addr=0x" + ADDR.toString(16) + ")")
+            serial.writeLine() // newline
             // continue anyway; reads will show if it's working
         }
 
